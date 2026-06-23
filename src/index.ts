@@ -59,7 +59,8 @@ async function main() {
     process.exit(1);
   }
 
-  const batchSize = parseInt(args['batch-size'] as string, 10) ?? 100;
+  const rawBatchSize = args['batch-size'] as string | undefined;
+  const batchSize = rawBatchSize ? parseInt(rawBatchSize, 10) : 100;
   const dryRun = !!args['dry-run'];
   const verbose = !!args.verbose;
   const root = args.root as string | undefined;
