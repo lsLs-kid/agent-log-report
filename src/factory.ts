@@ -54,9 +54,24 @@ export function createTransport(
     case 'db':
       return new DbTransport({ url: target });
     case 'kafka': {
-      const brokers = target.split(',').map((b) => b.trim()).filter(Boolean);
+      // Strip any stray whitespace / CR / invisible chars that Windows shells may inject
+      const brokers = target
+        .split(',')
+        .map((b) => b.replace(/[\r\n\t]/g, '').trim())
+        .filter(Boolean);
       if (brokers.length === 0) {
         throw new LogSyncError('Kafka target must be a comma-separated list of brokers', 'INVALID_KAFKA_TARGET');
+      }
+      // Validate each broker looks like host:port
+      for (const b of brokers) {
+        const colon = b.lastIndexOf(':');
+        const port = colon !== -1 ? Number(b.slice(colon + 1)) : NaN;
+        if (colon === -1 || isNaN(port) || port < 1 || port > 65535) {
+          throw new LogSyncError(
+            `Invalid broker address "${b}" — expected format is host:port (e.g. 192.168.1.1:9092)`,
+            'INVALID_KAFKA_BROKER',
+          );
+        }
       }
       if (!opts?.topic || opts.topic.trim() === '') {
         throw new LogSyncError('Kafka transport requires --topic', 'MISSING_KAFKA_TOPIC');
