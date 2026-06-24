@@ -81,9 +81,10 @@ Persists sync positions to a JSON file (`~/.config/log-sync/watermark.json` by d
 - Each line becomes one `LogRecord`; `normalized` extracts `role`, `timestamp`, `model`, `tokenUsage`
 
 ### opencode
-- Reads `~/.local/share/opencode/db/ngagent.db` (or path override via `--root`)
-- Uses **`sql.js`** (pure WASM, no native build required) to read the SQLite file
+- Reads `~/.local/share/opencode/opencode.db` and `~/.local/share/opencode/db/ngagent.db` (or path override via `--root`)
+- Uses **`sql.js`** (pure WASM, no native build required) to read SQLite files
 - **Session-level granularity**: one `LogRecord` = one complete session document
+- Each discovered database gets its own `SourceCursor`, so watermarks are tracked independently per file
 - Change detection: queries `message WHERE rowid > last_msg_rowid` and `part WHERE rowid > last_part_rowid` to find sessions with new content
 - For each changed session: joins session + all messages + all parts, assembles `OpenCodeSessionDoc`
 - New watermark values (`msg-rowid`, `part-rowid`) are returned in `nextCursor.extra` — NOT written inside `read()`. `syncSource` in `sync.ts` commits them via `watermark.setExtra()` after a successful send.

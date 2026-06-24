@@ -8,7 +8,7 @@
 
 | Agent (provider) | 日志格式 | 默认路径 |
 |---|---|---|
-| `opencode` | SQLite | `~/.local/share/opencode/db/ngagent.db` |
+| `opencode` | SQLite | `~/.local/share/opencode/opencode.db` 和 `~/.local/share/opencode/db/ngagent.db`（自动发现） |
 | `claude-code` | JSONL | `~/.claude/projects/` |
 | `code-agent-3x` | JSONL | `~/.cac/projects/` |
 
@@ -91,7 +91,7 @@ if (result.errors.length > 0) {
 | `target` | `--target` | ✓ | — | 目标地址（格式见上表） |
 | `topic` | `--topic` | kafka 时必填 | — | Kafka topic 名 |
 | `userId` | `--user-id` | 否 | — | 用户工号，会附加到每条记录 |
-| `root` | `--root` | 否 | 各 provider 默认路径 | 覆盖日志根目录或 db 文件路径 |
+| `root` | `--root` | 否 | opencode 自动发现两个默认 db；其他见上表 | 覆盖日志根目录或 db 文件路径；opencode 指定后只读该路径 |
 | `watermarkFile` | `--watermark-file` | 否 | `~/.config/log-sync/watermark.json` | 水位文件路径；多实例时各用不同路径互相隔离 |
 | `batchSize` | `--batch-size` | 否 | `100` | 每批发送记录数；opencode session 粒度下一般无需调整 |
 | — | `--dry-run` | 否 | — | 只打印将发什么，不发送、不更新水位（仅 CLI） |
@@ -174,7 +174,7 @@ if (result.errors.length > 0) {
 ## 增量同步原理
 
 - **JSONL**（claude-code / code-agent-3x）：记录每个文件的字节偏移量，下次从上次结束位置继续读；仅处理完整行，末尾未完成的行等下次再读；文件缩小时自动重置（日志轮转场景）。
-- **opencode**：用 SQLite `rowid`（不是 text 类型的 id 字段）做水位，分别追踪 message 表和 part 表的最大 rowid，下次只查找有新内容的 session，重新组装完整 session 文档后发送。
+- **opencode**：用 SQLite `rowid`（不是 text 类型的 id 字段）做水位，分别追踪 message 表和 part 表的最大 rowid，下次只查找有新内容的 session，重新组装完整 session 文档后发送。默认同时扫描 `~/.local/share/opencode/opencode.db` 和 `~/.local/share/opencode/db/ngagent.db`，每个数据库独立水位；`--root` 指定路径时只读该路径。
 
 水位在**每次成功发送后立即落盘**，发送失败不更新水位，重试时会重发同样的数据。默认路径 `~/.config/log-sync/watermark.json`，通过 `--watermark-file` 可指定其他路径。
 

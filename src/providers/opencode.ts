@@ -5,7 +5,7 @@ import type { LogRecord, Provider, SourceCursor, OpenCodeSessionDoc, OpenCodeMes
 import type { WatermarkStore } from '../watermark.js';
 
 export interface OpencodeProviderOptions {
-  dbPath: string;
+  dbPaths: string[];
   watermark: WatermarkStore;
   userId?: string;
 }
@@ -101,33 +101,33 @@ async function openSqlJs(dbPath: string): Promise<SqlJsDb> {
 }
 
 export class OpencodeProvider implements Provider {
-  private resolvedDbPath: string;
+  private resolvedDbPaths: string[];
   private watermark: WatermarkStore;
 
   constructor(private readonly opts: OpencodeProviderOptions) {
-    const expanded = opts.dbPath.startsWith('~')
-      ? path.join(os.homedir(), opts.dbPath.slice(1))
-      : opts.dbPath;
-    const stat = fs.existsSync(expanded) ? fs.statSync(expanded) : undefined;
-    if (stat?.isDirectory()) {
-      this.resolvedDbPath = path.join(expanded, 'opencode.db');
-    } else {
-      this.resolvedDbPath = expanded;
-    }
+    this.resolvedDbPaths = opts.dbPaths
+      .map((dbPath) => {
+        const expanded = dbPath.startsWith('~')
+          ? path.join(os.homedir(), dbPath.slice(1))
+          : dbPath;
+        const stat = fs.existsSync(expanded) ? fs.statSync(expanded) : undefined;
+        if (stat?.isDirectory()) {
+          return path.join(expanded, 'opencode.db');
+        }
+        return expanded;
+      })
+      .filter((p) => fs.existsSync(p) && fs.statSync(p).isFile());
     this.watermark = opts.watermark;
   }
 
   async listSources(): Promise<SourceCursor[]> {
-    if (!fs.existsSync(this.resolvedDbPath)) return [];
-    return [
-      {
-        provider: 'opencode',
-        sessionId: 'opencode-sessions',
-        sourcePath: this.resolvedDbPath,
-        type: 'sqlite-table',
-        position: 0,
-      },
-    ];
+    return this.resolvedDbPaths.map((dbPath) => ({
+      provider: 'opencode',
+      sessionId: `opencode-sessions-${path.basename(dbPath, '.db')}`,
+      sourcePath: dbPath,
+      type: 'sqlite-table',
+      position: 0,
+    }));
   }
 
   async read(cursor: SourceCursor): Promise<{ records: LogRecord[]; nextCursor: SourceCursor }> {
