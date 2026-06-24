@@ -50,13 +50,17 @@ export async function sync(config: SyncConfig): Promise<SyncResult> {
   let totalSent = 0;
   const errors: SyncResult['errors'] = [];
 
-  for (const cursor of sources) {
-    try {
-      const sent = await syncSource(provider, transport, watermark, cursor, batchSize);
-      totalSent += sent;
-    } catch (err) {
-      errors.push({ sourcePath: cursor.sourcePath, error: err });
+  try {
+    for (const cursor of sources) {
+      try {
+        const sent = await syncSource(provider, transport, watermark, cursor, batchSize);
+        totalSent += sent;
+      } catch (err) {
+        errors.push({ sourcePath: cursor.sourcePath, error: err });
+      }
     }
+  } finally {
+    await transport.disconnect?.().catch(() => {});
   }
 
   return { totalSent, errors };

@@ -184,6 +184,8 @@ if (result.errors.length > 0) {
 
 发送时自动使用 GZIP 压缩（producer 侧），broker 和消费端对此透明——消费端看到的仍然是解压后的原始 JSON，无需额外处理。压缩的作用是减少网络传输量和 broker 存储占用，JSON 文本通常能压缩 80-90%。
 
+如果单条记录（通常是一个完整 opencode session）压缩后仍超过 broker 的 `message.max.bytes`，发送会失败并提示具体大小。此时需要在 Kafka broker 侧调大 `message.max.bytes`（以及 `replica.fetch.max.bytes`、`fetch.message.max.bytes` 等关联参数），客户端没有单独的消息大小上限可配。
+
 ---
 
 ## 开发

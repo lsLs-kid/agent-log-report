@@ -98,7 +98,7 @@ async function main() {
       if (verbose) console.error(`Synced ${total} records from ${cursor.sourcePath}`);
     }
     if (verbose) console.error('Sync complete');
-    return;
+    process.exit(0);
   }
 
   const result = await sync({
@@ -123,6 +123,7 @@ async function main() {
   if (result.errors.length > 0) {
     process.exit(2);
   }
+  process.exit(0);
 }
 
 main().catch((err) => {

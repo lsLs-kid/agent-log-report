@@ -11,6 +11,7 @@ export class KafkaTransport implements Transport {
   private kafka: Kafka;
   private producer: Producer;
   private topic: string;
+  private connected = false;
 
   constructor(private readonly opts: KafkaTransportOptions) {
     this.topic = opts.topic;
@@ -19,6 +20,7 @@ export class KafkaTransport implements Transport {
       brokers: opts.brokers,
       ssl: false,
       sasl: undefined,
+      retry: { retries: 0 },
     });
     this.producer = this.kafka.producer({
       createPartitioner: Partitioners.DefaultPartitioner,
@@ -29,7 +31,7 @@ export class KafkaTransport implements Transport {
     if (records.length === 0) return;
 
     try {
-      await this.producer.connect();
+      await this.ensureConnected();
 
       const failed: { sessionId: string; error: unknown }[] = [];
 
@@ -42,9 +44,7 @@ export class KafkaTransport implements Transport {
           });
         } catch (err) {
           failed.push({ sessionId: r.sessionId, error: err });
-          console.error(
-            `[kafka] failed to send session ${r.sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          this.logSendError(r, err);
         }
       }
 
@@ -63,8 +63,41 @@ export class KafkaTransport implements Transport {
         'KAFKA_ERROR',
         err,
       );
-    } finally {
-      await this.producer.disconnect().catch(() => {});
     }
+  }
+
+  async disconnect(): Promise<void> {
+    if (!this.connected) return;
+    await this.producer.disconnect().catch(() => {});
+    this.connected = false;
+  }
+
+  private async ensureConnected(): Promise<void> {
+    if (!this.connected) {
+      await this.producer.connect();
+      this.connected = true;
+    }
+  }
+
+  private logSendError(record: LogRecord, err: unknown): void {
+    const kafkaErr = err as { type?: string; code?: number } | undefined;
+    const isTooLarge =
+      kafkaErr?.type === 'MESSAGE_TOO_LARGE' ||
+      kafkaErr?.type === 'RECORD_LIST_TOO_LARGE' ||
+      kafkaErr?.code === 10 ||
+      kafkaErr?.code === 18;
+
+    if (isTooLarge) {
+      const size = Buffer.byteLength(JSON.stringify(record), 'utf8');
+      const mb = (size / 1024 / 1024).toFixed(2);
+      console.error(
+        `[kafka] record for session ${record.sessionId} is too large (${size} bytes, ${mb} MB). Increase broker 'message.max.bytes' to at least ${Math.ceil(size / 1024 / 1024)} MB.`,
+      );
+      return;
+    }
+
+    console.error(
+      `[kafka] failed to send session ${record.sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }

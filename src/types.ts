@@ -40,6 +40,7 @@ export interface Provider {
 
 export interface Transport {
   send(records: LogRecord[]): Promise<void>;
+  disconnect?: () => Promise<void>;
 }
 
 export class LogSyncError extends Error {
