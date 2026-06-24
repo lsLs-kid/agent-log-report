@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import Database from 'better-sqlite3';
 import type { LogRecord, Provider, SourceCursor, OpenCodeSessionDoc, OpenCodeMessage, OpenCodeToolCall, OpenCodeReasoningPart } from '../types.js';
 import type { WatermarkStore } from '../watermark.js';
 
@@ -53,6 +52,53 @@ function msToIso(ms: number | null | undefined): string | null {
 
 const TOOL_OUTPUT_LIMIT = 16384;
 
+// sql.js query helpers — wrap prepare/step/getAsObject into familiar all()/get() style
+
+type SqlJsDb = {
+  prepare(sql: string): SqlJsStmt;
+  close(): void;
+};
+
+type SqlJsStmt = {
+  bind(params: unknown[]): boolean;
+  step(): boolean;
+  getAsObject(params?: unknown[]): Record<string, unknown>;
+  free(): void;
+  reset(): void;
+};
+
+function sqlAll(db: SqlJsDb, sql: string, params: unknown[]): Record<string, unknown>[] {
+  const stmt = db.prepare(sql);
+  try {
+    stmt.bind(params);
+    const rows: Record<string, unknown>[] = [];
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject());
+    }
+    return rows;
+  } finally {
+    stmt.free();
+  }
+}
+
+function sqlGet(db: SqlJsDb, sql: string, params: unknown[]): Record<string, unknown> | undefined {
+  const stmt = db.prepare(sql);
+  try {
+    stmt.bind(params);
+    if (!stmt.step()) return undefined;
+    return stmt.getAsObject();
+  } finally {
+    stmt.free();
+  }
+}
+
+async function openSqlJs(dbPath: string): Promise<SqlJsDb> {
+  const { default: initSqlJs } = await import('sql.js');
+  const SQL = await initSqlJs();
+  const buf = fs.readFileSync(dbPath);
+  return new SQL.Database(buf) as unknown as SqlJsDb;
+}
+
 export class OpencodeProvider implements Provider {
   private resolvedDbPath: string;
   private watermark: WatermarkStore;
@@ -78,27 +124,28 @@ export class OpencodeProvider implements Provider {
         sessionId: 'opencode-sessions',
         sourcePath: this.resolvedDbPath,
         type: 'sqlite-table',
-        position: 0, // position unused; watermarks stored via getExtra/setExtra
+        position: 0,
       },
     ];
   }
 
   async read(cursor: SourceCursor): Promise<{ records: LogRecord[]; nextCursor: SourceCursor }> {
-    const dbPath = cursor.sourcePath;
     const lastMsgRowid = this.watermark.getExtra(cursor, 'msg-rowid');
     const lastPartRowid = this.watermark.getExtra(cursor, 'part-rowid');
 
-    const db = new Database(dbPath, { readonly: true });
+    const db = await openSqlJs(cursor.sourcePath);
     try {
-      // Detect changed sessions from new messages
-      const changedFromMsg = db
-        .prepare('SELECT DISTINCT session_id FROM message WHERE rowid > ? ORDER BY rowid')
-        .all(lastMsgRowid) as { session_id: string }[];
+      const changedFromMsg = sqlAll(
+        db,
+        'SELECT DISTINCT session_id FROM message WHERE rowid > ? ORDER BY rowid',
+        [lastMsgRowid],
+      ) as { session_id: string }[];
 
-      // Detect changed sessions from new parts
-      const changedFromPart = db
-        .prepare('SELECT DISTINCT session_id FROM part WHERE rowid > ? ORDER BY rowid')
-        .all(lastPartRowid) as { session_id: string }[];
+      const changedFromPart = sqlAll(
+        db,
+        'SELECT DISTINCT session_id FROM part WHERE rowid > ? ORDER BY rowid',
+        [lastPartRowid],
+      ) as { session_id: string }[];
 
       const changedIds = new Set<string>([
         ...changedFromMsg.map((r) => r.session_id),
@@ -109,13 +156,11 @@ export class OpencodeProvider implements Provider {
         return { records: [], nextCursor: cursor };
       }
 
-      // Advance watermarks
-      const newMsgRowid =
-        (db.prepare('SELECT MAX(rowid) AS m FROM message WHERE rowid > ?').get(lastMsgRowid) as { m: number | null }).m ??
-        lastMsgRowid;
-      const newPartRowid =
-        (db.prepare('SELECT MAX(rowid) AS m FROM part WHERE rowid > ?').get(lastPartRowid) as { m: number | null }).m ??
-        lastPartRowid;
+      const newMsgRow = sqlGet(db, 'SELECT MAX(rowid) AS m FROM message WHERE rowid > ?', [lastMsgRowid]);
+      const newMsgRowid = (newMsgRow?.m as number | null) ?? lastMsgRowid;
+
+      const newPartRow = sqlGet(db, 'SELECT MAX(rowid) AS m FROM part WHERE rowid > ?', [lastPartRowid]);
+      const newPartRowid = (newPartRow?.m as number | null) ?? lastPartRowid;
 
       const records: LogRecord[] = [];
       for (const sessionId of changedIds) {
@@ -123,7 +168,6 @@ export class OpencodeProvider implements Provider {
         if (record) records.push(record);
       }
 
-      // Store updated watermarks
       this.watermark.setExtra(cursor, 'msg-rowid', newMsgRowid);
       this.watermark.setExtra(cursor, 'part-rowid', newPartRowid);
 
@@ -133,25 +177,22 @@ export class OpencodeProvider implements Provider {
     }
   }
 
-  private buildSessionRecord(db: Database.Database, cursor: SourceCursor, sessionId: string): LogRecord | null {
-    const sessionRow = db
-      .prepare('SELECT * FROM session WHERE id = ?')
-      .get(sessionId) as SessionRow | undefined;
+  private buildSessionRecord(db: SqlJsDb, cursor: SourceCursor, sessionId: string): LogRecord | null {
+    const sessionRow = sqlGet(db, 'SELECT * FROM session WHERE id = ?', [sessionId]) as SessionRow | undefined;
     if (!sessionRow) return null;
 
-    const messageRows = db
-      .prepare(
-        'SELECT id, session_id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created, id',
-      )
-      .all(sessionId) as MessageRow[];
+    const messageRows = sqlAll(
+      db,
+      'SELECT id, session_id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created, id',
+      [sessionId],
+    ) as MessageRow[];
 
-    const partRows = db
-      .prepare(
-        'SELECT id, message_id, session_id, time_created, data FROM part WHERE session_id = ? ORDER BY time_created, id',
-      )
-      .all(sessionId) as PartRow[];
+    const partRows = sqlAll(
+      db,
+      'SELECT id, message_id, session_id, time_created, data FROM part WHERE session_id = ? ORDER BY time_created, id',
+      [sessionId],
+    ) as PartRow[];
 
-    // Group parts by message_id
     const partsByMsg = new Map<string, PartRow[]>();
     for (const part of partRows) {
       const existing = partsByMsg.get(part.message_id);
@@ -316,12 +357,9 @@ function safeParseJson(s: string | null | undefined): Record<string, unknown> {
   }
 }
 
-function validateSqlIdentifier(name: string): string {
+export function validateSqlIdentifier(name: string): string {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
     throw new Error(`Invalid SQL identifier: ${name}`);
   }
   return name;
 }
-
-// Keep export for potential future use
-export { validateSqlIdentifier };

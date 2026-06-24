@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { Client as PgClient } from 'pg';
 import type { LogRecord, Transport } from '../types.js';
 import { LogSyncError } from '../types.js';
@@ -119,11 +121,17 @@ export class DbTransport implements Transport {
   }
 
   private async sendSqlite(records: LogRecord[]): Promise<void> {
-    const { default: Database } = await import('better-sqlite3');
+    const { default: initSqlJs } = await import('sql.js');
     const dbPath = this.opts.url.replace(/^sqlite:\/\//, '');
-    const db = new Database(dbPath);
+    const SQL = await initSqlJs();
+
+    // Load existing db or create empty
+    let buf: Buffer | undefined;
+    try { buf = fs.readFileSync(dbPath); } catch { /* new file */ }
+    const db = buf ? new SQL.Database(buf) : new SQL.Database();
+
     try {
-      db.exec(`
+      db.run(`
         CREATE TABLE IF NOT EXISTS ${this.tableName} (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           provider TEXT NOT NULL,
@@ -134,19 +142,29 @@ export class DbTransport implements Transport {
           normalized TEXT
         )
       `);
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_${this.tableName}_provider_session ON ${this.tableName}(provider, session_id)`);
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_${this.tableName}_synced_at ON ${this.tableName}(synced_at)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_${this.tableName}_provider_session ON ${this.tableName}(provider, session_id)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_${this.tableName}_synced_at ON ${this.tableName}(synced_at)`);
 
-      const insert = db.prepare(
-        `INSERT INTO ${this.tableName} (provider, source_path, session_id, synced_at, raw, normalized)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      );
-
-      db.transaction(() => {
+      db.run('BEGIN');
+      try {
+        const stmt = db.prepare(
+          `INSERT INTO ${this.tableName} (provider, source_path, session_id, synced_at, raw, normalized)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        );
         for (const r of records) {
-          insert.run(r.provider, r.sourcePath, r.sessionId, r.syncedAt, r.raw, JSON.stringify(r.normalized));
+          stmt.run([r.provider, r.sourcePath, r.sessionId, r.syncedAt, r.raw, JSON.stringify(r.normalized)]);
         }
-      })();
+        stmt.free();
+        db.run('COMMIT');
+      } catch (err) {
+        try { db.run('ROLLBACK'); } catch { /* ignore */ }
+        throw err;
+      }
+
+      // Persist to disk
+      const out = db.export();
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      fs.writeFileSync(dbPath, Buffer.from(out));
     } finally {
       db.close();
     }
