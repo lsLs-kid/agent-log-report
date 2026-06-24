@@ -30,15 +30,34 @@ export class KafkaTransport implements Transport {
 
     try {
       await this.producer.connect();
-      await this.producer.send({
-        topic: this.topic,
-        compression: CompressionTypes.GZIP,
-        messages: records.map((r) => ({
-          key: r.sessionId,
-          value: JSON.stringify(r),
-        })),
-      });
+
+      const failed: { sessionId: string; error: unknown }[] = [];
+
+      for (const r of records) {
+        try {
+          await this.producer.send({
+            topic: this.topic,
+            compression: CompressionTypes.GZIP,
+            messages: [{ key: r.sessionId, value: JSON.stringify(r) }],
+          });
+        } catch (err) {
+          failed.push({ sessionId: r.sessionId, error: err });
+          console.error(
+            `[kafka] failed to send session ${r.sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      if (failed.length > 0 && failed.length === records.length) {
+        // All failed — surface as error so the caller knows nothing went through
+        throw new LogSyncError(
+          `All ${records.length} record(s) failed to send`,
+          'KAFKA_ALL_FAILED',
+        );
+      }
+      // Partial failure: already logged per-record, remaining records sent OK
     } catch (err) {
+      if (err instanceof LogSyncError) throw err;
       throw new LogSyncError(
         `Failed to send to Kafka: ${err instanceof Error ? err.message : String(err)}`,
         'KAFKA_ERROR',
