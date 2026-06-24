@@ -10,7 +10,9 @@ export interface OpencodeProviderOptions {
 }
 
 interface TableRow {
-  id: number;
+  rowid: number;
+  id: string;
+  session_id?: string;
   [key: string]: unknown;
 }
 
@@ -67,12 +69,10 @@ export class OpencodeProvider implements Provider {
     const db = new Database(dbPath, { readonly: true });
     const tableName = validateSqlIdentifier(table);
     try {
-      const hasId = db.prepare(`PRAGMA table_info(${tableName})`).all() as { name: string }[];
-      const rawIdColumn = hasId.some((c) => c.name === 'id') ? 'id' : 'rowid';
-      const idColumn = validateSqlIdentifier(rawIdColumn);
+      const idColumn = 'rowid';
 
       const rows = db
-        .prepare(`SELECT * FROM ${tableName} WHERE ${idColumn} > ? ORDER BY ${idColumn} LIMIT ?`)
+        .prepare(`SELECT rowid, * FROM ${tableName} WHERE ${idColumn} > ? ORDER BY ${idColumn} LIMIT ?`)
         .all(lastId, this.batchSize) as TableRow[];
 
       if (rows.length === 0) {
@@ -80,7 +80,7 @@ export class OpencodeProvider implements Provider {
       }
 
       const records = rows.map((row) => this.buildRecord(cursor, table, row));
-      const maxId = Math.max(...rows.map((r) => Number(r[idColumn] ?? 0)));
+      const maxId = Math.max(...rows.map((r) => Number(r.rowid ?? 0)));
 
       return {
         records,
