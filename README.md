@@ -14,7 +14,7 @@
 
 | 目标 (transport) | target 格式 |
 |---|---|
-| `kafka` | 逗号分隔的 `ip:port`，PLAINTEXT，无鉴权 |
+| `kafka` | 逗号分隔的 `ip:port`，PLAINTEXT，无鉴权，GZIP 压缩 |
 | `http` | `https://...`，POST JSON 数组 |
 | `db` | `postgres://...` / `mysql://...` / `sqlite:///path` |
 
@@ -22,7 +22,7 @@
 
 ## 安装依赖
 
-需要 Node.js ≥ 20。
+需要 Node.js ≥ 20。无需 C++ 编译工具链，SQLite 使用纯 WASM 实现（`sql.js`），Windows 直接可用。
 
 ```bash
 npm install
@@ -40,7 +40,7 @@ npm install
 # 查看帮助
 npx tsx src/index.ts --help
 
-# opencode → Kafka（干跑，不实际发送）
+# opencode → Kafka（干跑，不实际发送，不更新水位）
 npx tsx src/index.ts \
   --provider opencode \
   --transport kafka \
@@ -90,7 +90,7 @@ if (result.errors.length > 0) {
 }
 ```
 
-`sync()` 是幂等的：水位持久化在本地文件，每次调用只发上次之后新增的内容，多次调用同一个没有变化的 session 不会重复发送。
+`sync()` 是幂等的：水位在每次成功发送后立即落盘，发送失败不更新水位，下次调用会重试同样的数据。
 
 ---
 
@@ -112,66 +112,72 @@ if (result.errors.length > 0) {
 
 ## 发送的数据格式
 
-### opencode
-
-以 **session 为粒度**，每条记录代表一个完整会话（包含所有消息及工具调用）。下游按 `session_id` upsert 覆盖即可，无需在服务端做 JOIN。
+每条 Kafka / HTTP / DB 记录的结构：
 
 ```jsonc
 {
   "provider": "opencode",
+  "sourcePath": "/path/to/ngagent.db",
   "sessionId": "ses_xxx",
   "syncedAt": "2025-05-02T10:00:00.000Z",
-  "raw": "...",           // 与 normalized 相同的 JSON 字符串
-  "normalized": {
-    "record_type": "opencode-session",
-    "session_id": "ses_xxx",
-    "title": "Fix auth bug",
-    "cwd": "/Users/dev/myproject",
-    "model": "kimi-k2.6",
-    "cost_total": 0.042,
-    "tokens_total": { "input": 14873, "output": 187, "cache_read": 0, "cache_write": 0, "reasoning": 0 },
-    "message_count": 16,
-    "messages": [
-      {
-        "message_id": "msg_xxx",
-        "role": "user",
-        "timestamp": "2025-05-02T10:00:01.000Z",
-        "text_parts": ["请帮我修复认证 bug"],
-        "tool_calls": [],
-        "reasoning_parts": [],
-        "has_patch": false,
-        "step_count": 0
-      },
-      {
-        "message_id": "msg_yyy",
-        "role": "assistant",
-        "model_id": "kimi-k2.6",
-        "provider_id": "volcengine-plan",
-        "generation_duration_ms": 7775,
-        "tokens": { "input": 14873, "output": 187, "total": 15060, ... },
-        "tool_calls": [
-          {
-            "tool_name": "read",
-            "call_id": "read:0",
-            "status": "completed",
-            "input": { "filePath": "/src/auth.ts" },
-            "output": "...(截断到 16KB)",
-            "is_error": false
-          }
-        ],
-        "reasoning_parts": [{ "text": "...", "duration_ms": 2196 }],
-        "text_parts": ["已修复，改动如下..."],
-        "has_patch": true,
-        "step_count": 3
-      }
-    ]
-  }
+  "normalized": { /* 见下方 */ }
+}
+```
+
+### opencode
+
+以 **session 为粒度**，`normalized` 是一个完整的会话文档，下游按 `session_id` upsert 覆盖即可，无需在服务端做 JOIN。
+
+```jsonc
+{
+  "record_type": "opencode-session",
+  "session_id": "ses_xxx",
+  "title": "Fix auth bug",
+  "cwd": "/Users/dev/myproject",
+  "model": "kimi-k2.6",
+  "cost_total": 0.042,
+  "tokens_total": { "input": 14873, "output": 187, "cache_read": 0, "cache_write": 0, "reasoning": 0 },
+  "message_count": 16,
+  "messages": [
+    {
+      "message_id": "msg_xxx",
+      "role": "user",
+      "timestamp": "2025-05-02T10:00:01.000Z",
+      "text_parts": ["请帮我修复认证 bug"],
+      "tool_calls": [],
+      "reasoning_parts": [],
+      "has_patch": false,
+      "step_count": 0
+    },
+    {
+      "message_id": "msg_yyy",
+      "role": "assistant",
+      "model_id": "kimi-k2.6",
+      "provider_id": "volcengine-plan",
+      "generation_duration_ms": 7775,
+      "tokens": { "input": 14873, "output": 187, "total": 15060, "cache_read": 0, "cache_write": 0, "reasoning": 0 },
+      "tool_calls": [
+        {
+          "tool_name": "read",
+          "call_id": "read:0",
+          "status": "completed",
+          "input": { "filePath": "/src/auth.ts" },
+          "output": "...文件内容（最长 16KB）",
+          "is_error": false
+        }
+      ],
+      "reasoning_parts": [{ "text": "...", "duration_ms": 2196 }],
+      "text_parts": ["已修复，改动如下..."],
+      "has_patch": true,
+      "step_count": 3
+    }
+  ]
 }
 ```
 
 ### claude-code / code-agent-3x
 
-以 **消息行为粒度**，每条 JSONL 行对应一条记录。`normalized` 提取了 `role`、`timestamp`、`model`、`tokenUsage`，`raw` 保留原始行内容。
+以**消息行为粒度**，每条 JSONL 行对应一条记录。`normalized` 提取了 `role`、`timestamp`、`model`、`tokenUsage`。
 
 ---
 
@@ -180,7 +186,13 @@ if (result.errors.length > 0) {
 - **JSONL**（claude-code / code-agent-3x）：记录每个文件的字节偏移量，下次从上次结束位置继续读；仅处理完整行，末尾未完成的行等下次再读；文件缩小时自动重置（日志轮转场景）。
 - **opencode**：用 SQLite `rowid`（不是 text 类型的 id 字段）做水位，分别追踪 message 表和 part 表的最大 rowid，下次只查找有新内容的 session，重新组装完整 session 文档后发送。
 
-水位默认持久化到 `~/.config/log-sync/watermark.json`，通过 `--watermark-file` 可以指定其他路径（多个 Agent 实例时隔离各自的水位）。
+水位在**每次成功发送后立即落盘**，发送失败不更新水位，重试时会重发同样的数据。默认路径 `~/.config/log-sync/watermark.json`，通过 `--watermark-file` 可指定其他路径。
+
+---
+
+## 关于 Kafka 压缩
+
+发送时自动使用 GZIP 压缩（producer 侧），broker 和消费端对此透明——消费端看到的仍然是解压后的原始 JSON，无需额外处理。压缩的作用是减少网络传输量和 broker 存储占用，JSON 文本通常能压缩 80-90%。
 
 ---
 
@@ -189,15 +201,14 @@ if (result.errors.length > 0) {
 首次发送时自动建表，表名默认为 `log_sync_records`，结构：
 
 ```sql
--- PostgreSQL / MySQL 示意
+-- PostgreSQL
 CREATE TABLE log_sync_records (
   id          BIGSERIAL PRIMARY KEY,
   provider    TEXT NOT NULL,
   source_path TEXT NOT NULL,
   session_id  TEXT NOT NULL,
   synced_at   TIMESTAMPTZ NOT NULL,
-  raw         JSONB NOT NULL,       -- MySQL: JSON
-  normalized  JSONB                 -- MySQL: JSON
+  normalized  JSONB
 );
 -- 自动创建索引：(provider, session_id) 和 (synced_at)
 ```

@@ -18,9 +18,9 @@ src/
 │   ├── jsonl.ts        # claude-code and code-agent-3x (JSONL files)
 │   └── opencode.ts     # opencode (SQLite, session-level assembly)
 └── transports/
-    ├── kafka.ts        # KafkaTransport (kafkajs, PLAINTEXT, no auth)
+    ├── kafka.ts        # KafkaTransport (kafkajs, PLAINTEXT, GZIP, no auth)
     ├── http.ts         # HttpTransport (POST JSON array, Node fetch)
-    └── db.ts           # DbTransport (postgres / mysql / sqlite)
+    └── db.ts           # DbTransport (postgres / mysql / sqlite via sql.js)
 ```
 
 ## Key Abstractions
@@ -32,7 +32,7 @@ interface Provider {
   read(cursor: SourceCursor): Promise<{ records: LogRecord[]; nextCursor: SourceCursor }>;
 }
 ```
-Each provider returns `SourceCursor` objects (one per log file or DB table) and reads `LogRecord` batches starting from `cursor.position`.
+Each provider returns `SourceCursor` objects (one per log file or DB table) and reads `LogRecord` batches starting from `cursor.position`. The `nextCursor` may carry `extra: Record<string, number>` with auxiliary watermark values (used by opencode) — these are committed by `syncSource` only after a successful send.
 
 ### Transport interface (`src/types.ts`)
 ```typescript
@@ -48,13 +48,28 @@ interface LogRecord {
   sourcePath: string;
   sessionId: string;
   syncedAt: string;        // ISO timestamp
-  raw: string;             // JSON string of original data
-  normalized: NormalizedRecord;  // structured extraction
+  normalized: NormalizedRecord;  // structured extraction; no raw field
+}
+```
+
+Note: there is no `raw` field. For opencode, `normalized` IS the full structured document. For JSONL providers, `normalized` is a thin extraction from the original line (role, timestamp, model, tokenUsage).
+
+### SourceCursor (`src/types.ts`)
+```typescript
+interface SourceCursor {
+  provider: string;
+  sessionId: string;
+  sourcePath: string;
+  type: 'jsonl' | 'sqlite-table';
+  position: number;
+  extra?: Record<string, number>;  // auxiliary watermark values from provider
 }
 ```
 
 ### WatermarkStore (`src/watermark.ts`)
-Persists sync positions to a JSON file (`~/.config/log-sync/watermark.json` by default). Keyed by `sourcePath`. For opencode, auxiliary rowid watermarks are stored in `WatermarkEntry.extra` via `getExtra(cursor, key)` / `setExtra(cursor, key, value)`. The `set()` method preserves existing `extra` fields.
+Persists sync positions to a JSON file (`~/.config/log-sync/watermark.json` by default). Keyed by `sourcePath`. The `set()` method preserves existing `extra` fields. For opencode, auxiliary rowid watermarks are stored in `WatermarkEntry.extra` via `getExtra(cursor, key)` / `setExtra(cursor, key, value)`.
+
+**Watermark commit order** (critical invariant): watermarks are written to disk only inside `syncSource` immediately after `transport.send()` succeeds. A failed send leaves the watermark unchanged, so the next run retries the same data.
 
 ## Provider Details
 
@@ -66,11 +81,12 @@ Persists sync positions to a JSON file (`~/.config/log-sync/watermark.json` by d
 - Each line becomes one `LogRecord`; `normalized` extracts `role`, `timestamp`, `model`, `tokenUsage`
 
 ### opencode
-- Reads `~/.local/share/opencode/db/ngagent.db` (or path override)
+- Reads `~/.local/share/opencode/db/ngagent.db` (or path override via `--root`)
+- Uses **`sql.js`** (pure WASM, no native build required) to read the SQLite file
 - **Session-level granularity**: one `LogRecord` = one complete session document
 - Change detection: queries `message WHERE rowid > last_msg_rowid` and `part WHERE rowid > last_part_rowid` to find sessions with new content
 - For each changed session: joins session + all messages + all parts, assembles `OpenCodeSessionDoc`
-- Watermarks stored in `WatermarkEntry.extra` as `msg-rowid` and `part-rowid`
+- New watermark values (`msg-rowid`, `part-rowid`) are returned in `nextCursor.extra` — NOT written inside `read()`. `syncSource` in `sync.ts` commits them via `watermark.setExtra()` after a successful send.
 - `normalized` is an `OpenCodeSessionDoc` (cast via `as unknown as NormalizedRecord`)
 
 #### OpenCodeSessionDoc shape
@@ -90,7 +106,7 @@ Persists sync positions to a JSON file (`~/.config/log-sync/watermark.json` by d
     text_parts: string[],          // type=text parts
     reasoning_parts: [{ text, duration_ms }],
     tool_calls: [{ tool_name, call_id, status, input, output, is_error }],
-    // output truncated to 16384 chars
+    // output NOT truncated — full content preserved
     has_patch: boolean,            // any type=patch or type=file parts
     step_count: number,            // count of type=step-start parts
   }]
@@ -105,8 +121,9 @@ Message `data` JSON has two model field layouts; both are handled:
 
 ### kafka
 - Uses `kafkajs`, `ssl: false`, `sasl: undefined` (PLAINTEXT, no auth)
-- `target` = comma-separated `host:port` list
+- `target` = comma-separated `host:port` list; each broker is stripped of `\r\n\t` and validated as `host:port` with numeric port 1–65535 before connecting
 - Each `LogRecord` → one Kafka message; key = `sessionId`, value = `JSON.stringify(record)`
+- **GZIP compression** applied on every send (`CompressionTypes.GZIP`); transparent to consumers — kafkajs auto-decompresses on receive
 - Connects and disconnects per `send()` call
 
 ### http
@@ -117,8 +134,9 @@ Message `data` JSON has two model field layouts; both are handled:
 
 ### db
 - `target` = connection string: `postgres://...`, `mysql://...`, `sqlite:///path`
+- SQLite backend uses `sql.js` (WASM): loads entire file into memory, writes back to disk after each send
 - Auto-creates table `log_sync_records` (configurable via `DbTransportOptions.tableName`) on first send
-- Schema: `id, provider, source_path, session_id, synced_at, raw (JSONB/JSON/TEXT), normalized (JSONB/JSON/TEXT)`
+- Schema: `id, provider, source_path, session_id, synced_at, normalized (JSONB/JSON/TEXT)` — no `raw` column
 - Indexes on `(provider, session_id)` and `synced_at`
 - Each `send()` is a single transaction; rolls back on error
 
@@ -148,7 +166,7 @@ interface SyncResult {
 }
 ```
 
-`sync()` is idempotent and safe to call on every session idle. Returns `{ totalSent: 0, errors: [] }` when nothing has changed since last run.
+`sync()` is idempotent and safe to call on every session idle. Watermark is saved to disk after each successful send; a failed send does not advance the watermark. Returns `{ totalSent: 0, errors: [] }` when nothing has changed since last run.
 
 ## CLI (`src/index.ts`)
 
@@ -161,8 +179,9 @@ The CLI parses `--provider`, `--transport`, `--target`, and optional flags, then
 ## Adding a New Provider
 
 1. Create `src/providers/<id>.ts` implementing `Provider`
-2. Register in `src/factory.ts` `createProvider()` switch
-3. If it needs watermark injection (like opencode), accept `WatermarkStore` in constructor options and update the factory call signature
+2. Return new watermark values in `nextCursor.extra` (not via direct WatermarkStore calls inside `read()`) so `syncSource` can commit them only after a successful send
+3. Register in `src/factory.ts` `createProvider()` switch
+4. If it needs WatermarkStore for reading initial watermarks, accept it in constructor options and update the factory call signature
 
 ## Adding a New Transport
 
@@ -185,7 +204,7 @@ npm run lint
 
 ## Dependencies
 
-- `better-sqlite3` — reads opencode SQLite DB and SQLite transport target
+- `sql.js` — pure WASM SQLite; reads opencode DB and powers SQLite transport target (no native build required, works on Windows without MSVC)
 - `kafkajs` — Kafka transport
 - `pg` — PostgreSQL transport
 - `mysql2` — MySQL transport
