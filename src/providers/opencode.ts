@@ -238,7 +238,6 @@ export class OpencodeProvider implements Provider {
       sourcePath: cursor.sourcePath,
       sessionId: sessionRow.id,
       syncedAt: new Date().toISOString(),
-      raw: JSON.stringify(doc),
       normalized: doc as unknown as import('../types.js').NormalizedRecord,
     };
   }

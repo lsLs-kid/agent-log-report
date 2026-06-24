@@ -49,7 +49,6 @@ export class DbTransport implements Transport {
           source_path TEXT NOT NULL,
           session_id TEXT NOT NULL,
           synced_at TIMESTAMPTZ NOT NULL,
-          raw JSONB NOT NULL,
           normalized JSONB
         )
       `);
@@ -60,9 +59,9 @@ export class DbTransport implements Transport {
       try {
         for (const r of records) {
           await client.query(
-            `INSERT INTO ${this.tableName} (provider, source_path, session_id, synced_at, raw, normalized)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [r.provider, r.sourcePath, r.sessionId, r.syncedAt, r.raw, JSON.stringify(r.normalized)],
+            `INSERT INTO ${this.tableName} (provider, source_path, session_id, synced_at, normalized)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [r.provider, r.sourcePath, r.sessionId, r.syncedAt, JSON.stringify(r.normalized)],
           );
         }
         await client.query('COMMIT');
@@ -90,7 +89,6 @@ export class DbTransport implements Transport {
           source_path TEXT NOT NULL,
           session_id VARCHAR(255) NOT NULL,
           synced_at DATETIME(3) NOT NULL,
-          raw JSON NOT NULL,
           normalized JSON,
           INDEX idx_${this.tableName}_provider_session (provider, session_id),
           INDEX idx_${this.tableName}_synced_at (synced_at)
@@ -101,9 +99,9 @@ export class DbTransport implements Transport {
       try {
         for (const r of records) {
           await conn.query(
-            `INSERT INTO ${this.tableName} (provider, source_path, session_id, synced_at, raw, normalized)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [r.provider, r.sourcePath, r.sessionId, r.syncedAt, r.raw, JSON.stringify(r.normalized)],
+            `INSERT INTO ${this.tableName} (provider, source_path, session_id, synced_at, normalized)
+             VALUES (?, ?, ?, ?, ?)`,
+            [r.provider, r.sourcePath, r.sessionId, r.syncedAt, JSON.stringify(r.normalized)],
           );
         }
         await conn.commit();
@@ -138,7 +136,6 @@ export class DbTransport implements Transport {
           source_path TEXT NOT NULL,
           session_id TEXT NOT NULL,
           synced_at TEXT NOT NULL,
-          raw TEXT NOT NULL,
           normalized TEXT
         )
       `);
@@ -148,11 +145,11 @@ export class DbTransport implements Transport {
       db.run('BEGIN');
       try {
         const stmt = db.prepare(
-          `INSERT INTO ${this.tableName} (provider, source_path, session_id, synced_at, raw, normalized)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO ${this.tableName} (provider, source_path, session_id, synced_at, normalized)
+           VALUES (?, ?, ?, ?, ?)`,
         );
         for (const r of records) {
-          stmt.run([r.provider, r.sourcePath, r.sessionId, r.syncedAt, r.raw, JSON.stringify(r.normalized)]);
+          stmt.run([r.provider, r.sourcePath, r.sessionId, r.syncedAt, JSON.stringify(r.normalized)]);
         }
         stmt.free();
         db.run('COMMIT');

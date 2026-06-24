@@ -183,7 +183,6 @@ export class JsonlProvider implements Provider {
       sourcePath: cursor.sourcePath,
       sessionId: cursor.sessionId,
       syncedAt: new Date().toISOString(),
-      raw: rawLine,
       normalized: this.extractNormalized(parsed),
     };
   }
