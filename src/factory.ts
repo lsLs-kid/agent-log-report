@@ -2,7 +2,6 @@ import type { Provider, Transport } from './types.js';
 import { JsonlProvider } from './providers/jsonl.js';
 import { OpencodeProvider } from './providers/opencode.js';
 import { HttpTransport } from './transports/http.js';
-import { DbTransport } from './transports/db.js';
 import { KafkaTransport } from './transports/kafka.js';
 import { LogSyncError } from './types.js';
 import type { WatermarkStore } from './watermark.js';
@@ -51,8 +50,6 @@ export function createTransport(
         timeoutMs: opts?.timeoutMs,
         headers: opts?.headers,
       });
-    case 'db':
-      return new DbTransport({ url: target });
     case 'kafka': {
       // Strip any stray whitespace / CR / invisible chars that Windows shells may inject
       const brokers = target

@@ -5,13 +5,13 @@ import type { Provider, Transport, SourceCursor } from './types.js';
 export interface SyncConfig {
   /** claude-code | code-agent-3x | opencode */
   provider: string;
-  /** http | db | kafka */
+  /** http | kafka */
   transport: string;
-  /** HTTP endpoint, DB URL, or comma-separated Kafka brokers */
+  /** HTTP endpoint or comma-separated Kafka brokers */
   target: string;
   /** Kafka topic (required when transport is kafka) */
   topic?: string;
-  /** Override default log root / db path */
+  /** Override default log root / SQLite db path */
   root?: string;
   /** Watermark file path (default: ~/.config/log-sync/watermark.json) */
   watermarkFile?: string;

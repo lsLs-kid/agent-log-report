@@ -31,8 +31,8 @@ Usage: log-sync --provider <provider> --transport <transport> --target <target> 
 
 Options:
   --provider           claude-code | code-agent-3x | opencode
-  --transport          http | db | kafka
-  --target             HTTP endpoint, DB URL, or comma-separated Kafka brokers
+  --transport          http | kafka
+  --target             HTTP endpoint or comma-separated Kafka brokers
   --topic              Kafka topic (required when transport is kafka)
   --root               Override default log root / db path
   --watermark-file     Watermark file path (default: ~/.config/log-sync/watermark.json)
@@ -43,7 +43,6 @@ Options:
 
 Examples:
   log-sync --provider claude-code --transport http --target http://localhost:3000/logs
-  log-sync --provider opencode --transport db --target postgres://user:pass@localhost/logs
   log-sync --provider claude-code --transport kafka --target 192.168.1.10:9092,192.168.1.11:9092,192.168.1.12:9092 --topic agent-logs
 `.trim();
 }

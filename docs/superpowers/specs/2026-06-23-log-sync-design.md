@@ -7,22 +7,21 @@
 
 ## Goal
 
-Build a TypeScript CLI tool that reads local agent logs (Claude Code, Code Agent 3.x, opencode) and pushes them incrementally to a remote HTTP API or database. First run sends all existing logs; subsequent runs send only new records.
+Build a TypeScript CLI tool that reads local agent logs (Claude Code, Code Agent 3.x, opencode) and pushes them incrementally to a remote HTTP API or Kafka topic. First run sends all existing logs; subsequent runs send only new records.
 
 ## Architecture
 
 The tool is split into three independent layers:
 
 - **Provider**: reads local logs and produces `LogRecord[]`. Hides JSONL vs SQLite differences.
-- **Transport**: sends `LogRecord[]` to a target. Hides HTTP vs DB differences.
+- **Transport**: sends `LogRecord[]` to a target. Hides HTTP vs Kafka differences.
 - **Watermark**: tracks sync position per source so only new data is sent.
 
 ## Tech Stack
 
 - TypeScript 5, Node 20+
 - `tsx` for dev execution
-- `better-sqlite3` for reading opencode databases
-- `pg` for PostgreSQL transport (optional runtime dependency)
+- `sql.js` for reading opencode databases
 - Node built-in `fetch` for HTTP transport
 
 ## Directory Layout
@@ -40,7 +39,7 @@ log-sync/
 │   │   └── opencode.ts       # opencode SQLite
 │   └── transports/
 │       ├── http.ts
-│       └── db.ts
+│       └── kafka.ts
 ```
 
 ## Data Model
@@ -163,38 +162,12 @@ new HttpTransport({
 - Sends each batch as one POST with `Content-Type: application/json`.
 - Any non-2xx response throws and aborts the sync for that source.
 
-### DbTransport
-
-```typescript
-new DbTransport({
-  url: 'postgres://...' | 'mysql://...' | 'sqlite://...',
-})
-```
-
-Auto-creates table:
-
-```sql
-CREATE TABLE IF NOT EXISTS log_sync_records (
-  id BIGSERIAL PRIMARY KEY,
-  provider TEXT NOT NULL,
-  source_path TEXT NOT NULL,
-  session_id TEXT NOT NULL,
-  synced_at TIMESTAMPTZ NOT NULL,
-  raw JSONB NOT NULL,
-  normalized JSONB
-);
-CREATE INDEX idx_provider_session ON log_sync_records(provider, session_id);
-CREATE INDEX idx_synced_at ON log_sync_records(synced_at);
-```
-
-Batch inserts in a single transaction.
-
 ## CLI
 
 ```bash
 npx log-sync \
   --provider claude-code|code-agent-3x|opencode \
-  --transport http|db \
+  --transport http|kafka \
   --target <url> \
   [--root <path>] \
   [--watermark-file <path>] \
@@ -207,7 +180,7 @@ Examples:
 
 ```bash
 npx log-sync --provider claude-code --transport http --target http://localhost:3000/api/log-sync
-npx log-sync --provider opencode --transport db --target postgres://user:pass@localhost/logs
+npx log-sync --provider claude-code --transport kafka --target 127.0.0.1:9092 --topic agent-logs
 ```
 
 ## Exit Codes
@@ -226,7 +199,6 @@ npx log-sync --provider opencode --transport db --target postgres://user:pass@lo
 | Source file shrinks | Reset watermark to 0 for that source |
 | opencode DB locked | Wait briefly, then error out |
 | HTTP timeout / non-2xx | Throw; do not update that source's watermark |
-| DB insert failure | Rollback transaction; do not update watermark |
 | New subagent file appears | `listSources()` discovers it; watermark starts at 0 |
 | Empty source | Skip with no records |
 

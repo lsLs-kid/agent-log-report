@@ -19,8 +19,7 @@ src/
 │   └── opencode.ts     # opencode (SQLite, session-level assembly)
 └── transports/
     ├── kafka.ts        # KafkaTransport (kafkajs, PLAINTEXT, GZIP, no auth)
-    ├── http.ts         # HttpTransport (POST JSON array, Node fetch)
-    └── db.ts           # DbTransport (postgres / mysql / sqlite via sql.js)
+    └── http.ts         # HttpTransport (POST JSON array, Node fetch)
 ```
 
 ## Key Abstractions
@@ -132,14 +131,6 @@ Message `data` JSON has two model field layouts; both are handled:
 - Default timeout: 10 000 ms
 - Splits into sub-batches of `batchSize` records each
 
-### db
-- `target` = connection string: `postgres://...`, `mysql://...`, `sqlite:///path`
-- SQLite backend uses `sql.js` (WASM): loads entire file into memory, writes back to disk after each send
-- Auto-creates table `log_sync_records` (configurable via `DbTransportOptions.tableName`) on first send
-- Schema: `id, provider, source_path, session_id, synced_at, normalized (JSONB/JSON/TEXT)` — no `raw` column
-- Indexes on `(provider, session_id)` and `synced_at`
-- Each `send()` is a single transaction; rolls back on error
-
 ## Public API (`src/mod.ts`)
 
 ```typescript
@@ -152,8 +143,8 @@ import type { SyncConfig, SyncResult, LogRecord, OpenCodeSessionDoc } from './sr
 ```typescript
 interface SyncConfig {
   provider: string;        // 'opencode' | 'claude-code' | 'code-agent-3x'
-  transport: string;       // 'kafka' | 'http' | 'db'
-  target: string;          // broker list / URL / connection string
+  transport: string;       // 'kafka' | 'http'
+  target: string;          // broker list / URL
   topic?: string;          // required for kafka
   root?: string;           // override default log path
   watermarkFile?: string;  // default: ~/.config/log-sync/watermark.json
@@ -204,8 +195,6 @@ npm run lint
 
 ## Dependencies
 
-- `sql.js` — pure WASM SQLite; reads opencode DB and powers SQLite transport target (no native build required, works on Windows without MSVC)
+- `sql.js` — pure WASM SQLite; reads opencode DB (no native build required, works on Windows without MSVC)
 - `kafkajs` — Kafka transport
-- `pg` — PostgreSQL transport
-- `mysql2` — MySQL transport
 - `tsx` (dev) — run TypeScript directly without build step

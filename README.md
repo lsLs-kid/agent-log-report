@@ -1,6 +1,6 @@
 # agent-log-report
 
-将本地 AI 编码 Agent 的会话日志增量同步到外部目标（Kafka、HTTP 接口、数据库）的 TypeScript 工具库。支持 opencode、Claude Code、Code Agent 3.x 三种 Agent。
+将本地 AI 编码 Agent 的会话日志增量同步到外部目标（Kafka、HTTP 接口）的 TypeScript 工具库。支持 opencode、Claude Code、Code Agent 3.x 三种 Agent。
 
 ---
 
@@ -16,7 +16,6 @@
 |---|---|
 | `kafka` | 逗号分隔的 `ip:port`，PLAINTEXT，无鉴权，GZIP 压缩 |
 | `http` | `https://...`，POST JSON 数组 |
-| `db` | `postgres://...` / `mysql://...` / `sqlite:///path` |
 
 ---
 
@@ -53,19 +52,6 @@ npx tsx src/index.ts \
   --provider claude-code \
   --transport http \
   --target "https://ingest.example.com/logs"
-
-# opencode → PostgreSQL
-npx tsx src/index.ts \
-  --provider opencode \
-  --transport db \
-  --target "postgres://user:pass@localhost:5432/mydb"
-
-# opencode → 本地 SQLite（快速验证）
-npx tsx src/index.ts \
-  --provider opencode \
-  --transport db \
-  --target "sqlite:///tmp/test.db" \
-  --verbose
 ```
 
 ### 方式二：TS 代码直接调用
@@ -99,7 +85,7 @@ if (result.errors.length > 0) {
 | TS 字段 (`SyncConfig`) | CLI 参数 | 必填 | 默认值 | 说明 |
 |---|---|---|---|---|
 | `provider` | `--provider` | ✓ | — | Agent 类型：`opencode` / `claude-code` / `code-agent-3x` |
-| `transport` | `--transport` | ✓ | — | 目标类型：`kafka` / `http` / `db` |
+| `transport` | `--transport` | ✓ | — | 目标类型：`kafka` / `http` |
 | `target` | `--target` | ✓ | — | 目标地址（格式见上表） |
 | `topic` | `--topic` | kafka 时必填 | — | Kafka topic 名 |
 | `root` | `--root` | 否 | 各 provider 默认路径 | 覆盖日志根目录或 db 文件路径 |
@@ -112,7 +98,7 @@ if (result.errors.length > 0) {
 
 ## 发送的数据格式
 
-每条 Kafka / HTTP / DB 记录的结构：
+每条 Kafka / HTTP 记录的结构：
 
 ```jsonc
 {
@@ -193,27 +179,6 @@ if (result.errors.length > 0) {
 ## 关于 Kafka 压缩
 
 发送时自动使用 GZIP 压缩（producer 侧），broker 和消费端对此透明——消费端看到的仍然是解压后的原始 JSON，无需额外处理。压缩的作用是减少网络传输量和 broker 存储占用，JSON 文本通常能压缩 80-90%。
-
----
-
-## 目标端建表说明（db transport）
-
-首次发送时自动建表，表名默认为 `log_sync_records`，结构：
-
-```sql
--- PostgreSQL
-CREATE TABLE log_sync_records (
-  id          BIGSERIAL PRIMARY KEY,
-  provider    TEXT NOT NULL,
-  source_path TEXT NOT NULL,
-  session_id  TEXT NOT NULL,
-  synced_at   TIMESTAMPTZ NOT NULL,
-  normalized  JSONB
-);
--- 自动创建索引：(provider, session_id) 和 (synced_at)
-```
-
-opencode 以 session 粒度发送，下游若要实现 upsert，在 `session_id` 上加唯一约束后改用 `INSERT ... ON CONFLICT DO UPDATE` 即可；默认是 append 写入（每次变化追加一条新记录）。
 
 ---
 
