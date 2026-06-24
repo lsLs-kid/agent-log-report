@@ -52,7 +52,6 @@ export async function sync(config: SyncConfig): Promise<SyncResult> {
     try {
       const sent = await syncSource(provider, transport, watermark, cursor, batchSize);
       totalSent += sent;
-      watermark.save();
     } catch (err) {
       errors.push({ sourcePath: cursor.sourcePath, error: err });
     }
@@ -84,7 +83,14 @@ async function syncSource(
     if (records.length === 0) break;
 
     await transport.send(records);
+    // Commit watermark only after successful send
     watermark.set(nextCursor, nextCursor.position);
+    if (nextCursor.extra) {
+      for (const [key, value] of Object.entries(nextCursor.extra)) {
+        watermark.setExtra(nextCursor, key, value);
+      }
+    }
+    watermark.save();
     total += records.length;
     current = nextCursor;
 

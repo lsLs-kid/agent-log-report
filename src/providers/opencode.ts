@@ -168,10 +168,15 @@ export class OpencodeProvider implements Provider {
         if (record) records.push(record);
       }
 
-      this.watermark.setExtra(cursor, 'msg-rowid', newMsgRowid);
-      this.watermark.setExtra(cursor, 'part-rowid', newPartRowid);
-
-      return { records, nextCursor: cursor };
+      // Return new watermark values in nextCursor.extra so the caller
+      // can commit them only after a successful send.
+      return {
+        records,
+        nextCursor: {
+          ...cursor,
+          extra: { 'msg-rowid': newMsgRowid, 'part-rowid': newPartRowid },
+        },
+      };
     } finally {
       db.close();
     }

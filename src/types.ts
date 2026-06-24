@@ -29,6 +29,8 @@ export interface SourceCursor {
   sourcePath: string;
   type: 'jsonl' | 'sqlite-table';
   position: number;
+  /** Provider-specific auxiliary watermark values to commit after a successful send */
+  extra?: Record<string, number>;
 }
 
 export interface Provider {
