@@ -12,11 +12,11 @@
   },
   "dependencies": {
     "kafkajs": "^2.2.4",
-    "sql.js": "^1.14.0"
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
-    "@types/sql.js": "^1.4.11",
+    "@types/sqlite3": "^3.1.11",
     "tsx": "^4.15.0",
     "typescript": "^5.4.0"
   },

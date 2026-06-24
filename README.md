@@ -21,7 +21,7 @@
 
 ## 安装依赖
 
-需要 Node.js ≥ 20。无需 C++ 编译工具链，SQLite 使用纯 WASM 实现（`sql.js`），Windows 直接可用。
+需要 Node.js ≥ 20。`sqlite3` 是原生 Node 绑定，用于读取 opencode 的 SQLite 数据库（支持 WAL 模式）。安装时会尝试下载预编译二进制，如果平台没有预编译包，需要本地有 C++ 编译工具链。
 
 ```bash
 npm install

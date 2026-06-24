@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import sqlite3 from 'sqlite3';
 import type { LogRecord, Provider, SourceCursor, OpenCodeSessionDoc, OpenCodeMessage, OpenCodeToolCall, OpenCodeReasoningPart } from '../types.js';
 import type { WatermarkStore } from '../watermark.js';
 
@@ -53,51 +54,42 @@ function msToIso(ms: number | null | undefined): string | null {
 
 const TOOL_OUTPUT_LIMIT = 16384;
 
-// sql.js query helpers — wrap prepare/step/getAsObject into familiar all()/get() style
+type SqliteDb = sqlite3.Database;
 
-type SqlJsDb = {
-  prepare(sql: string): SqlJsStmt;
-  close(): void;
-};
-
-type SqlJsStmt = {
-  bind(params: unknown[]): boolean;
-  step(): boolean;
-  getAsObject(params?: unknown[]): Record<string, unknown>;
-  free(): void;
-  reset(): void;
-};
-
-function sqlAll(db: SqlJsDb, sql: string, params: unknown[]): Record<string, unknown>[] {
-  const stmt = db.prepare(sql);
-  try {
-    stmt.bind(params);
-    const rows: Record<string, unknown>[] = [];
-    while (stmt.step()) {
-      rows.push(stmt.getAsObject());
-    }
-    return rows;
-  } finally {
-    stmt.free();
-  }
+function sqlAll(db: SqliteDb, sql: string, params: unknown[]): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows as Record<string, unknown>[]);
+    });
+  });
 }
 
-function sqlGet(db: SqlJsDb, sql: string, params: unknown[]): Record<string, unknown> | undefined {
-  const stmt = db.prepare(sql);
-  try {
-    stmt.bind(params);
-    if (!stmt.step()) return undefined;
-    return stmt.getAsObject();
-  } finally {
-    stmt.free();
-  }
+function sqlGet(db: SqliteDb, sql: string, params: unknown[]): Promise<Record<string, unknown> | undefined> {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) reject(err);
+      else resolve(row as Record<string, unknown> | undefined);
+    });
+  });
 }
 
-async function openSqlJs(dbPath: string): Promise<SqlJsDb> {
-  const { default: initSqlJs } = await import('sql.js');
-  const SQL = await initSqlJs();
-  const buf = fs.readFileSync(dbPath);
-  return new SQL.Database(buf) as unknown as SqlJsDb;
+function openSqlite3(dbPath: string): Promise<SqliteDb> {
+  return new Promise((resolve, reject) => {
+    const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {
+      if (err) reject(err);
+      else resolve(db);
+    });
+  });
+}
+
+function closeSqlite3(db: SqliteDb): Promise<void> {
+  return new Promise((resolve, reject) => {
+    db.close((err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
 }
 
 export class OpencodeProvider implements Provider {
@@ -134,19 +126,19 @@ export class OpencodeProvider implements Provider {
     const lastMsgRowid = this.watermark.getExtra(cursor, 'msg-rowid');
     const lastPartRowid = this.watermark.getExtra(cursor, 'part-rowid');
 
-    const db = await openSqlJs(cursor.sourcePath);
+    const db = await openSqlite3(cursor.sourcePath);
     try {
-      const changedFromMsg = sqlAll(
+      const changedFromMsg = (await sqlAll(
         db,
         'SELECT DISTINCT session_id FROM message WHERE rowid > ? ORDER BY rowid',
         [lastMsgRowid],
-      ) as { session_id: string }[];
+      )) as { session_id: string }[];
 
-      const changedFromPart = sqlAll(
+      const changedFromPart = (await sqlAll(
         db,
         'SELECT DISTINCT session_id FROM part WHERE rowid > ? ORDER BY rowid',
         [lastPartRowid],
-      ) as { session_id: string }[];
+      )) as { session_id: string }[];
 
       const changedIds = new Set<string>([
         ...changedFromMsg.map((r) => r.session_id),
@@ -157,15 +149,15 @@ export class OpencodeProvider implements Provider {
         return { records: [], nextCursor: cursor };
       }
 
-      const newMsgRow = sqlGet(db, 'SELECT MAX(rowid) AS m FROM message WHERE rowid > ?', [lastMsgRowid]);
+      const newMsgRow = await sqlGet(db, 'SELECT MAX(rowid) AS m FROM message WHERE rowid > ?', [lastMsgRowid]);
       const newMsgRowid = (newMsgRow?.m as number | null) ?? lastMsgRowid;
 
-      const newPartRow = sqlGet(db, 'SELECT MAX(rowid) AS m FROM part WHERE rowid > ?', [lastPartRowid]);
+      const newPartRow = await sqlGet(db, 'SELECT MAX(rowid) AS m FROM part WHERE rowid > ?', [lastPartRowid]);
       const newPartRowid = (newPartRow?.m as number | null) ?? lastPartRowid;
 
       const records: LogRecord[] = [];
       for (const sessionId of changedIds) {
-        const record = this.buildSessionRecord(db, cursor, sessionId);
+        const record = await this.buildSessionRecord(db, cursor, sessionId);
         if (record) records.push(record);
       }
 
@@ -179,25 +171,25 @@ export class OpencodeProvider implements Provider {
         },
       };
     } finally {
-      db.close();
+      await closeSqlite3(db).catch(() => {});
     }
   }
 
-  private buildSessionRecord(db: SqlJsDb, cursor: SourceCursor, sessionId: string): LogRecord | null {
-    const sessionRow = sqlGet(db, 'SELECT * FROM session WHERE id = ?', [sessionId]) as SessionRow | undefined;
+  private async buildSessionRecord(db: SqliteDb, cursor: SourceCursor, sessionId: string): Promise<LogRecord | null> {
+    const sessionRow = (await sqlGet(db, 'SELECT * FROM session WHERE id = ?', [sessionId])) as SessionRow | undefined;
     if (!sessionRow) return null;
 
-    const messageRows = sqlAll(
+    const messageRows = (await sqlAll(
       db,
       'SELECT id, session_id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created, id',
       [sessionId],
-    ) as MessageRow[];
+    )) as MessageRow[];
 
-    const partRows = sqlAll(
+    const partRows = (await sqlAll(
       db,
       'SELECT id, message_id, session_id, time_created, data FROM part WHERE session_id = ? ORDER BY time_created, id',
       [sessionId],
-    ) as PartRow[];
+    )) as PartRow[];
 
     const partsByMsg = new Map<string, PartRow[]>();
     for (const part of partRows) {

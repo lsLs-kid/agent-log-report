@@ -82,7 +82,7 @@ Persists sync positions to a JSON file (`~/.config/log-sync/watermark.json` by d
 
 ### opencode
 - Reads `~/.local/share/opencode/opencode.db` and `~/.local/share/opencode/db/ngagent.db` (or path override via `--root`)
-- Uses **`sql.js`** (pure WASM, no native build required) to read SQLite files
+- Uses **`sqlite3`** (native Node binding) to read SQLite files with WAL support
 - **Session-level granularity**: one `LogRecord` = one complete session document
 - Each discovered database gets its own `SourceCursor`, so watermarks are tracked independently per file
 - Change detection: queries `message WHERE rowid > last_msg_rowid` and `part WHERE rowid > last_part_rowid` to find sessions with new content
@@ -198,6 +198,6 @@ npm run lint
 
 ## Dependencies
 
-- `sql.js` — pure WASM SQLite; reads opencode DB (no native build required, works on Windows without MSVC)
+- `sqlite3` — native Node SQLite binding; reads opencode DB with WAL support (prebuilt binaries available; falls back to compiling from source if needed)
 - `kafkajs` — Kafka transport
 - `tsx` (dev) — run TypeScript directly without build step
