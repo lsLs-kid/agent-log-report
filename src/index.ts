@@ -1,8 +1,9 @@
 import process from 'node:process';
 import { WatermarkStore } from './watermark.js';
-import { createProvider, createTransport } from './factory.js';
-import type { SourceCursor } from './types.js';
+import { createProvider } from './factory.js';
+import { sync } from './sync.js';
 import { LogSyncError } from './types.js';
+import type { SourceCursor } from './types.js';
 
 function parseArgs(argv: string[]) {
   const args = argv.slice(2);
@@ -47,6 +48,11 @@ Examples:
 `.trim();
 }
 
+function initialPosition(cursor: SourceCursor, watermark: WatermarkStore): number {
+  const entry = watermark.get(cursor);
+  return cursor.type === 'jsonl' ? entry.lastOffset : (entry.lastRowId ?? 0);
+}
+
 async function main() {
   const args = parseArgs(process.argv);
 
@@ -69,92 +75,52 @@ async function main() {
   const batchSize = rawBatchSize ? parseInt(rawBatchSize, 10) : 100;
   const dryRun = !!args['dry-run'];
   const verbose = !!args.verbose;
-  const root = args.root as string | undefined;
-  const watermarkFile = args['watermark-file'] as string | undefined;
-  const topic = args.topic as string | undefined;
+  const watermarkFile = (args['watermark-file'] as string | undefined) ?? WatermarkStore.defaultPath();
 
-  const watermark = new WatermarkStore(watermarkFile ?? WatermarkStore.defaultPath());
-  watermark.load();
+  if (dryRun) {
+    const watermark = new WatermarkStore(watermarkFile);
+    watermark.load();
+    const provider = createProvider(providerId, args.root as string | undefined, batchSize, watermark);
+    const sources = await provider.listSources();
+    if (verbose) console.error(`Found ${sources.length} source(s) for provider ${providerId}`);
+    for (const cursor of sources) {
+      let current = { ...cursor, position: initialPosition(cursor, watermark) };
+      let total = 0;
+      while (true) {
+        const { records, nextCursor } = await provider.read(current);
+        if (records.length === 0) break;
+        console.log(`Would send ${records.length} records from ${cursor.sourcePath}`);
+        total += records.length;
+        current = nextCursor;
+        if (records.length < batchSize) break;
+      }
+      if (verbose) console.error(`Synced ${total} records from ${cursor.sourcePath}`);
+    }
+    if (verbose) console.error('Sync complete');
+    return;
+  }
 
-  const provider = createProvider(providerId, root, batchSize, watermark);
-  const transport = createTransport(transportId, target as string, {
+  const result = await sync({
+    provider: providerId,
+    transport: transportId,
+    target,
+    topic: args.topic as string | undefined,
+    root: args.root as string | undefined,
+    watermarkFile,
     batchSize,
-    topic,
   });
 
-  const sources = await provider.listSources();
   if (verbose) {
-    console.error(`Found ${sources.length} source(s) for provider ${providerId}`);
-  }
-
-  const failed: { cursor: SourceCursor; error: unknown }[] = [];
-
-  for (const cursor of sources) {
-    try {
-      await syncSource(provider, transport, watermark, cursor, { batchSize, dryRun, verbose });
-      if (!dryRun) {
-        watermark.save();
-      }
-    } catch (err) {
-      failed.push({ cursor, error: err });
-      console.error(`Failed to sync ${cursor.sourcePath}:`, err instanceof Error ? err.message : String(err));
+    console.error(`Synced ${result.totalSent} record(s) total`);
+    for (const e of result.errors) {
+      console.error(`  Failed ${e.sourcePath}: ${e.error instanceof Error ? e.error.message : String(e.error)}`);
     }
-  }
-
-  if (failed.length > 0) {
-    console.error(`\n${failed.length} source(s) failed`);
-    process.exit(2);
-  }
-
-  if (verbose) {
     console.error('Sync complete');
   }
-}
 
-async function syncSource(
-  provider: ReturnType<typeof createProvider>,
-  transport: ReturnType<typeof createTransport>,
-  watermark: WatermarkStore,
-  cursor: SourceCursor,
-  opts: { batchSize: number; dryRun: boolean; verbose: boolean },
-) {
-  let current = { ...cursor, position: getInitialPosition(cursor, watermark) };
-
-  if (cursor.type === 'jsonl') {
-    const { statSync } = await import('node:fs');
-    const size = statSync(cursor.sourcePath).size;
-    if (watermark.resetIfNeeded(cursor, size)) {
-      current = { ...cursor, position: 0 };
-      if (opts.verbose) console.error(`Reset watermark for ${cursor.sourcePath} (file shrank)`);
-    }
+  if (result.errors.length > 0) {
+    process.exit(2);
   }
-
-  let total = 0;
-  while (true) {
-    const { records, nextCursor } = await provider.read(current);
-    if (records.length === 0) break;
-
-    if (opts.dryRun) {
-      console.log(`Would send ${records.length} records from ${cursor.sourcePath}`);
-    } else {
-      await transport.send(records);
-      watermark.set(nextCursor, nextCursor.position);
-    }
-
-    total += records.length;
-    current = nextCursor;
-
-    if (records.length < opts.batchSize) break;
-  }
-
-  if (opts.verbose) {
-    console.error(`Synced ${total} records from ${cursor.sourcePath}`);
-  }
-}
-
-function getInitialPosition(cursor: SourceCursor, watermark: WatermarkStore): number {
-  const entry = watermark.get(cursor);
-  return cursor.type === 'jsonl' ? entry.lastOffset : (entry.lastRowId ?? 0);
 }
 
 main().catch((err) => {
