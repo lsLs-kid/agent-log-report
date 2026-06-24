@@ -3,6 +3,7 @@ import { JsonlProvider } from './providers/jsonl.js';
 import { OpencodeProvider } from './providers/opencode.js';
 import { HttpTransport } from './transports/http.js';
 import { DbTransport } from './transports/db.js';
+import { KafkaTransport } from './transports/kafka.js';
 import { LogSyncError } from './types.js';
 
 export function createProvider(providerId: string, root?: string, batchSize?: number): Provider {
@@ -32,7 +33,7 @@ export function createProvider(providerId: string, root?: string, batchSize?: nu
 export function createTransport(
   transportId: string,
   target: string,
-  opts?: { batchSize?: number; timeoutMs?: number; headers?: Record<string, string> },
+  opts?: { batchSize?: number; timeoutMs?: number; headers?: Record<string, string>; topic?: string },
 ): Transport {
   switch (transportId) {
     case 'http':
@@ -44,6 +45,16 @@ export function createTransport(
       });
     case 'db':
       return new DbTransport({ url: target });
+    case 'kafka': {
+      const brokers = target.split(',').map((b) => b.trim()).filter(Boolean);
+      if (brokers.length === 0) {
+        throw new LogSyncError('Kafka target must be a comma-separated list of brokers', 'INVALID_KAFKA_TARGET');
+      }
+      if (!opts?.topic || opts.topic.trim() === '') {
+        throw new LogSyncError('Kafka transport requires --topic', 'MISSING_KAFKA_TOPIC');
+      }
+      return new KafkaTransport({ brokers, topic: opts.topic });
+    }
     default:
       throw new LogSyncError(`Unknown transport: ${transportId}`, 'UNKNOWN_TRANSPORT');
   }

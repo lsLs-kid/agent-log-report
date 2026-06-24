@@ -30,14 +30,20 @@ Usage: log-sync --provider <provider> --transport <transport> --target <target> 
 
 Options:
   --provider           claude-code | code-agent-3x | opencode
-  --transport          http | db
-  --target             HTTP endpoint or DB connection URL
+  --transport          http | db | kafka
+  --target             HTTP endpoint, DB URL, or comma-separated Kafka brokers
+  --topic              Kafka topic (required when transport is kafka)
   --root               Override default log root / db path
   --watermark-file     Watermark file path (default: ~/.config/log-sync/watermark.json)
   --batch-size         Records per batch (default: 100)
   --dry-run            Print what would be sent without sending
   --verbose            Print progress
   --help               Show this help
+
+Examples:
+  log-sync --provider claude-code --transport http --target http://localhost:3000/logs
+  log-sync --provider opencode --transport db --target postgres://user:pass@localhost/logs
+  log-sync --provider claude-code --transport kafka --target 192.168.1.10:9092,192.168.1.11:9092,192.168.1.12:9092 --topic agent-logs
 `.trim();
 }
 
@@ -65,10 +71,12 @@ async function main() {
   const verbose = !!args.verbose;
   const root = args.root as string | undefined;
   const watermarkFile = args['watermark-file'] as string | undefined;
+  const topic = args.topic as string | undefined;
 
   const provider = createProvider(providerId, root, batchSize);
   const transport = createTransport(transportId, target as string, {
     batchSize,
+    topic,
   });
   const watermark = new WatermarkStore(watermarkFile ?? WatermarkStore.defaultPath());
   watermark.load();
