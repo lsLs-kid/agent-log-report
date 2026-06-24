@@ -11,6 +11,7 @@ export function createProvider(
   root?: string,
   batchSize?: number,
   watermark?: WatermarkStore,
+  userId?: string,
 ): Provider {
   switch (providerId) {
     case 'claude-code':
@@ -18,18 +19,21 @@ export function createProvider(
         providerId,
         root: root ?? '~/.claude/projects',
         batchSize,
+        userId,
       });
     case 'code-agent-3x':
       return new JsonlProvider({
         providerId,
         root: root ?? '~/.cac/projects',
         batchSize,
+        userId,
       });
     case 'opencode': {
       if (!watermark) throw new LogSyncError('opencode provider requires a watermark store', 'MISSING_WATERMARK');
       return new OpencodeProvider({
         dbPath: root ?? '~/.local/share/opencode/db/ngagent.db',
         watermark,
+        userId,
       });
     }
     default:

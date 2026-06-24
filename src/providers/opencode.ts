@@ -7,6 +7,7 @@ import type { WatermarkStore } from '../watermark.js';
 export interface OpencodeProviderOptions {
   dbPath: string;
   watermark: WatermarkStore;
+  userId?: string;
 }
 
 interface SessionRow {
@@ -238,6 +239,7 @@ export class OpencodeProvider implements Provider {
       sourcePath: cursor.sourcePath,
       sessionId: sessionRow.id,
       syncedAt: new Date().toISOString(),
+      userId: this.opts.userId,
       normalized: doc as unknown as import('../types.js').NormalizedRecord,
     };
   }

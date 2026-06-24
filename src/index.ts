@@ -37,6 +37,7 @@ Options:
   --root               Override default log root / db path
   --watermark-file     Watermark file path (default: ~/.config/log-sync/watermark.json)
   --batch-size         Records per batch (default: 100)
+  --user-id            Employee ID to attach to each record
   --dry-run            Print what would be sent without sending
   --verbose            Print progress
   --help               Show this help
@@ -44,6 +45,7 @@ Options:
 Examples:
   log-sync --provider claude-code --transport http --target http://localhost:3000/logs
   log-sync --provider claude-code --transport kafka --target 192.168.1.10:9092,192.168.1.11:9092,192.168.1.12:9092 --topic agent-logs
+  log-sync --provider opencode --transport kafka --target 127.0.0.1:9092 --topic agent-logs --user-id u123456
 `.trim();
 }
 
@@ -79,7 +81,7 @@ async function main() {
   if (dryRun) {
     const watermark = new WatermarkStore(watermarkFile);
     watermark.load();
-    const provider = createProvider(providerId, args.root as string | undefined, batchSize, watermark);
+    const provider = createProvider(providerId, args.root as string | undefined, batchSize, watermark, args['user-id'] as string | undefined);
     const sources = await provider.listSources();
     if (verbose) console.error(`Found ${sources.length} source(s) for provider ${providerId}`);
     for (const cursor of sources) {
@@ -107,6 +109,7 @@ async function main() {
     root: args.root as string | undefined,
     watermarkFile,
     batchSize,
+    userId: args['user-id'] as string | undefined,
   });
 
   if (verbose) {

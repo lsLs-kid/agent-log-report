@@ -47,6 +47,7 @@ interface LogRecord {
   sourcePath: string;
   sessionId: string;
   syncedAt: string;        // ISO timestamp
+  userId?: string;         // optional employee ID from --user-id / SyncConfig.userId
   normalized: NormalizedRecord;  // structured extraction; no raw field
 }
 ```
@@ -146,6 +147,7 @@ interface SyncConfig {
   transport: string;       // 'kafka' | 'http'
   target: string;          // broker list / URL
   topic?: string;          // required for kafka
+  userId?: string;         // employee ID attached to every LogRecord
   root?: string;           // override default log path
   watermarkFile?: string;  // default: ~/.config/log-sync/watermark.json
   batchSize?: number;      // default: 100

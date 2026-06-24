@@ -8,6 +8,7 @@ export interface JsonlProviderOptions {
   root: string;
   subagentGlob?: string;
   batchSize?: number;
+  userId?: string;
 }
 
 function globSyncFallback(pattern: string, options: { cwd: string; absolute: boolean }): string[] {
@@ -183,6 +184,7 @@ export class JsonlProvider implements Provider {
       sourcePath: cursor.sourcePath,
       sessionId: cursor.sessionId,
       syncedAt: new Date().toISOString(),
+      userId: this.opts.userId,
       normalized: this.extractNormalized(parsed),
     };
   }

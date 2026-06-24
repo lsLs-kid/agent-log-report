@@ -45,6 +45,7 @@ npx tsx src/index.ts \
   --transport kafka \
   --target "10.0.0.1:9092,10.0.0.2:9092,10.0.0.3:9092" \
   --topic agent-logs \
+  --user-id u123456 \
   --dry-run --verbose
 
 # claude-code → HTTP
@@ -67,6 +68,7 @@ const result = await sync({
   transport: 'kafka',
   target:    '10.0.0.1:9092,10.0.0.2:9092,10.0.0.3:9092',
   topic:     'agent-logs',
+  userId:    'u123456',
 });
 
 // result.totalSent — 本次发出的记录数，0 表示无增量
@@ -88,6 +90,7 @@ if (result.errors.length > 0) {
 | `transport` | `--transport` | ✓ | — | 目标类型：`kafka` / `http` |
 | `target` | `--target` | ✓ | — | 目标地址（格式见上表） |
 | `topic` | `--topic` | kafka 时必填 | — | Kafka topic 名 |
+| `userId` | `--user-id` | 否 | — | 用户工号，会附加到每条记录 |
 | `root` | `--root` | 否 | 各 provider 默认路径 | 覆盖日志根目录或 db 文件路径 |
 | `watermarkFile` | `--watermark-file` | 否 | `~/.config/log-sync/watermark.json` | 水位文件路径；多实例时各用不同路径互相隔离 |
 | `batchSize` | `--batch-size` | 否 | `100` | 每批发送记录数；opencode session 粒度下一般无需调整 |
@@ -105,6 +108,7 @@ if (result.errors.length > 0) {
   "provider": "opencode",
   "sourcePath": "/path/to/ngagent.db",
   "sessionId": "ses_xxx",
+  "userId": "u123456",
   "syncedAt": "2025-05-02T10:00:00.000Z",
   "normalized": { /* 见下方 */ }
 }

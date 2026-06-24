@@ -11,6 +11,8 @@ export interface SyncConfig {
   target: string;
   /** Kafka topic (required when transport is kafka) */
   topic?: string;
+  /** User employee ID to attach to each record */
+  userId?: string;
   /** Override default log root / SQLite db path */
   root?: string;
   /** Watermark file path (default: ~/.config/log-sync/watermark.json) */
@@ -38,7 +40,7 @@ export async function sync(config: SyncConfig): Promise<SyncResult> {
   const watermark = new WatermarkStore(watermarkFile);
   watermark.load();
 
-  const provider = createProvider(config.provider, config.root, batchSize, watermark);
+  const provider = createProvider(config.provider, config.root, batchSize, watermark, config.userId);
   const transport = createTransport(config.transport, config.target, {
     batchSize,
     topic: config.topic,

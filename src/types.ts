@@ -19,6 +19,7 @@ export interface LogRecord {
   sourcePath: string;
   sessionId: string;
   syncedAt: string;
+  userId?: string;
   normalized: NormalizedRecord;
 }
 
