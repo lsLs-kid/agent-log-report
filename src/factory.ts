@@ -5,8 +5,14 @@ import { HttpTransport } from './transports/http.js';
 import { DbTransport } from './transports/db.js';
 import { KafkaTransport } from './transports/kafka.js';
 import { LogSyncError } from './types.js';
+import type { WatermarkStore } from './watermark.js';
 
-export function createProvider(providerId: string, root?: string, batchSize?: number): Provider {
+export function createProvider(
+  providerId: string,
+  root?: string,
+  batchSize?: number,
+  watermark?: WatermarkStore,
+): Provider {
   switch (providerId) {
     case 'claude-code':
       return new JsonlProvider({
@@ -20,11 +26,13 @@ export function createProvider(providerId: string, root?: string, batchSize?: nu
         root: root ?? '~/.cac/projects',
         batchSize,
       });
-    case 'opencode':
+    case 'opencode': {
+      if (!watermark) throw new LogSyncError('opencode provider requires a watermark store', 'MISSING_WATERMARK');
       return new OpencodeProvider({
         dbPath: root ?? '~/.local/share/opencode/opencode.db',
-        batchSize,
+        watermark,
       });
+    }
     default:
       throw new LogSyncError(`Unknown provider: ${providerId}`, 'UNKNOWN_PROVIDER');
   }

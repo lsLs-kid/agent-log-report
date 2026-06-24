@@ -9,7 +9,7 @@ export interface NormalizedRecord {
   recordType?: string;
   role?: 'user' | 'assistant' | 'system' | 'tool';
   timestamp?: string;
-  model?: string;
+  model?: string | null;
   tokenUsage?: TokenUsage;
   [key: string]: unknown;
 }
@@ -55,4 +55,70 @@ export interface SyncOptions {
   batchSize: number;
   dryRun: boolean;
   verbose: boolean;
+}
+
+export interface OpenCodeToolCall {
+  tool_name: string;
+  call_id: string | null;
+  status: string | null;
+  input: unknown;
+  output: string | null;
+  is_error: boolean;
+}
+
+export interface OpenCodeReasoningPart {
+  text: string;
+  duration_ms: number | null;
+}
+
+export interface OpenCodeMessage {
+  message_id: string;
+  role: string;
+  parent_message_id: string | null;
+  timestamp: string | null;
+  completed_at: string | null;
+  generation_duration_ms: number | null;
+  model_id: string | null;
+  provider_id: string | null;
+  agent: string | null;
+  mode: string | null;
+  cost: number | null;
+  tokens: {
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number;
+    reasoning: number;
+    total: number;
+  } | null;
+  finish_reason: string | null;
+  text_parts: string[];
+  reasoning_parts: OpenCodeReasoningPart[];
+  tool_calls: OpenCodeToolCall[];
+  has_patch: boolean;
+  step_count: number;
+}
+
+export interface OpenCodeSessionDoc {
+  record_type: 'opencode-session';
+  session_id: string;
+  title: string | null;
+  cwd: string | null;
+  project_id: string;
+  version: string | null;
+  model: string | null;
+  is_subagent: boolean;
+  parent_session_id: string | null;
+  started_at: string | null;
+  updated_at: string | null;
+  cost_total: number;
+  tokens_total: {
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number;
+    reasoning: number;
+  };
+  message_count: number;
+  messages: OpenCodeMessage[];
 }

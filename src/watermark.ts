@@ -8,6 +8,7 @@ export interface WatermarkEntry {
   lastOffset: number;
   lastRowId?: number;
   lastSyncAt: string;
+  extra?: Record<string, number>;
 }
 
 export class WatermarkStore {
@@ -51,13 +52,33 @@ export class WatermarkStore {
   }
 
   set(cursor: SourceCursor, position: number): void {
+    const existing = this.entries.get(cursor.sourcePath);
     const entry: WatermarkEntry = {
       path: cursor.sourcePath,
       lastOffset: cursor.type === 'jsonl' ? position : 0,
       lastRowId: cursor.type === 'sqlite-table' ? position : undefined,
       lastSyncAt: new Date().toISOString(),
+      extra: existing?.extra,
     };
     this.entries.set(cursor.sourcePath, entry);
+  }
+
+  getExtra(cursor: SourceCursor, key: string): number {
+    return this.entries.get(cursor.sourcePath)?.extra?.[key] ?? 0;
+  }
+
+  setExtra(cursor: SourceCursor, key: string, value: number): void {
+    const existing = this.entries.get(cursor.sourcePath);
+    if (existing) {
+      existing.extra = { ...existing.extra, [key]: value };
+    } else {
+      this.entries.set(cursor.sourcePath, {
+        path: cursor.sourcePath,
+        lastOffset: 0,
+        lastSyncAt: new Date().toISOString(),
+        extra: { [key]: value },
+      });
+    }
   }
 
   /** Reset watermark if the source has shrunk below stored position. */

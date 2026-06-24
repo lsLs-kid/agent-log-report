@@ -73,13 +73,14 @@ async function main() {
   const watermarkFile = args['watermark-file'] as string | undefined;
   const topic = args.topic as string | undefined;
 
-  const provider = createProvider(providerId, root, batchSize);
+  const watermark = new WatermarkStore(watermarkFile ?? WatermarkStore.defaultPath());
+  watermark.load();
+
+  const provider = createProvider(providerId, root, batchSize, watermark);
   const transport = createTransport(transportId, target as string, {
     batchSize,
     topic,
   });
-  const watermark = new WatermarkStore(watermarkFile ?? WatermarkStore.defaultPath());
-  watermark.load();
 
   const sources = await provider.listSources();
   if (verbose) {
