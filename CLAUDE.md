@@ -66,7 +66,7 @@ Persists sync positions to a JSON file (`~/.config/log-sync/watermark.json` by d
 - Each line becomes one `LogRecord`; `normalized` extracts `role`, `timestamp`, `model`, `tokenUsage`
 
 ### opencode
-- Reads `~/.local/share/opencode/opencode.db` (or path override)
+- Reads `~/.local/share/opencode/db/ngagent.db` (or path override)
 - **Session-level granularity**: one `LogRecord` = one complete session document
 - Change detection: queries `message WHERE rowid > last_msg_rowid` and `part WHERE rowid > last_part_rowid` to find sessions with new content
 - For each changed session: joins session + all messages + all parts, assembles `OpenCodeSessionDoc`

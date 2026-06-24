@@ -29,7 +29,7 @@ export function createProvider(
     case 'opencode': {
       if (!watermark) throw new LogSyncError('opencode provider requires a watermark store', 'MISSING_WATERMARK');
       return new OpencodeProvider({
-        dbPath: root ?? '~/.local/share/opencode/opencode.db',
+        dbPath: root ?? '~/.local/share/opencode/db/ngagent.db',
         watermark,
       });
     }

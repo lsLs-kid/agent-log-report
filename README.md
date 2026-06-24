@@ -8,7 +8,7 @@
 
 | Agent (provider) | 日志格式 | 默认路径 |
 |---|---|---|
-| `opencode` | SQLite | `~/.local/share/opencode/opencode.db` |
+| `opencode` | SQLite | `~/.local/share/opencode/db/ngagent.db` |
 | `claude-code` | JSONL | `~/.claude/projects/` |
 | `code-agent-3x` | JSONL | `~/.cac/projects/` |
 
